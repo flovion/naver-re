@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: naver-re
+    runtime: python
+    buildCommand: pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium
+    startCommand: python app.py
+    envVars:
+      - key: PORT
+        value: 10000
+    plan: free

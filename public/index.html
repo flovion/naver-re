@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>네이버 부동산 아파트 조회</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, 'Malgun Gothic', '맑은 고딕', sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: linear-gradient(135deg, #03c75a 0%, #00a846 100%);
+      color: #fff;
+      padding: 18px 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.18);
+    }
+    header h1 { font-size: 1.35rem; font-weight: 700; }
+    header p  { font-size: .82rem; opacity: .88; margin-top: 3px; }
+
+    .container { max-width: 1000px; margin: 0 auto; padding: 24px 16px; }
+
+    /* ── 검색 ── */
+    .search-box { display: flex; gap: 8px; margin-bottom: 24px; }
+    .search-box input {
+      flex: 1; padding: 13px 16px;
+      border: 2px solid #dde1e7; border-radius: 10px;
+      font-size: 1rem; outline: none; background: #fff;
+      transition: border-color .2s;
+    }
+    .search-box input:focus { border-color: #03c75a; }
+    .search-box button {
+      padding: 13px 26px; background: #03c75a; color: #fff;
+      border: none; border-radius: 10px; font-size: 1rem;
+      font-weight: 700; cursor: pointer; transition: background .2s;
+    }
+    .search-box button:hover    { background: #00a846; }
+    .search-box button:disabled { background: #aaa; cursor: not-allowed; }
+
+    /* ── 카드 ── */
+    .card {
+      background: #fff; border-radius: 14px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.07);
+      padding: 20px; margin-bottom: 16px;
+    }
+
+    /* ── 단지 목록 ── */
+    .section-label {
+      font-size: .82rem; font-weight: 700; color: #888;
+      text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px;
+    }
+    .complex-list { list-style: none; }
+    .complex-list li {
+      padding: 12px 14px; border-radius: 9px; cursor: pointer;
+      border: 1.5px solid transparent; transition: all .15s; margin-bottom: 6px;
+    }
+    .complex-list li:hover { background: #f0fdf4; border-color: #03c75a; }
+    .complex-list li .c-name { font-weight: 700; font-size: .95rem; }
+    .complex-list li .c-addr { font-size: .82rem; color: #888; margin-top: 3px; }
+    .complex-list li .c-meta { font-size: .78rem; color: #03c75a; margin-top: 4px; }
+
+    /* ── 선택 단지 헤더 ── */
+    .complex-header { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; }
+    .badge {
+      background: #03c75a; color: #fff;
+      padding: 3px 10px; border-radius: 20px;
+      font-size: .74rem; font-weight: 700; white-space: nowrap; margin-top: 3px;
+    }
+    .complex-header .info .name { font-size: 1.15rem; font-weight: 700; }
+    .complex-header .info .addr { font-size: .83rem; color: #888; margin-top: 3px; }
+    .complex-header .info .stats {
+      font-size: .8rem; color: #555; margin-top: 5px;
+      display: flex; gap: 12px; flex-wrap: wrap;
+    }
+    .stat-item span { color: #03c75a; font-weight: 600; }
+
+    /* ── 평형 탭 ── */
+    .tab-label { font-size: .82rem; font-weight: 700; color: #888; margin-bottom: 10px; }
+    .pyeong-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pyeong-tab {
+      padding: 7px 15px; border: 2px solid #dde1e7;
+      border-radius: 20px; cursor: pointer;
+      font-size: .85rem; font-weight: 600; color: #555; background: #fff;
+      transition: all .18s;
+    }
+    .pyeong-tab:hover  { border-color: #03c75a; color: #03c75a; }
+    .pyeong-tab.active { background: #03c75a; border-color: #03c75a; color: #fff; }
+
+    /* ── 섹션 제목 ── */
+    .section-title {
+      font-size: .9rem; font-weight: 700; color: #333;
+      margin-bottom: 12px; display: flex; align-items: center; gap: 7px;
+    }
+    .section-title::before {
+      content: ''; display: block; width: 3px; height: 15px;
+      background: #03c75a; border-radius: 2px;
+    }
+
+    /* ── 가격 그리드 ── */
+    @media (min-width: 640px) {
+      .price-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    }
+
+    /* ── 테이블 ── */
+    .tbl-wrap { overflow-x: auto; }
+    .price-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+    .price-table th {
+      background: #f8f9fa; padding: 9px 12px;
+      text-align: left; font-weight: 600; color: #555;
+      border-bottom: 2px solid #e9ecef; white-space: nowrap;
+    }
+    .price-table td { padding: 9px 12px; border-bottom: 1px solid #f0f0f0; color: #333; }
+    .price-table tbody tr:last-child td { border-bottom: none; }
+    .price-table tbody tr:hover td { background: #f8fff8; }
+    .clickable-row { cursor: pointer; }
+    .clickable-row:hover td { background: #e8f5e9 !important; }
+
+    .price-red  { font-weight: 700; color: #c62828; }
+    .price-blue { font-weight: 700; color: #1565c0; }
+    .price-green { font-weight: 700; color: #2e7d32; }
+
+    .tag {
+      display: inline-block; padding: 2px 7px; border-radius: 4px;
+      font-size: .74rem; font-weight: 700;
+    }
+    .tag-sell    { background: #fff3e0; color: #e65100; }
+    .tag-charter { background: #f3e5f5; color: #6a1b9a; }
+    .tag-rent    { background: #e3f2fd; color: #1565c0; }
+
+    /* ── 상태 ── */
+    .state-box { text-align: center; padding: 36px 20px; color: #aaa; }
+    .state-box.error { color: #c62828; }
+    .state-box p { margin-top: 10px; font-size: .9rem; }
+    .spinner {
+      display: inline-block; width: 26px; height: 26px;
+      border: 3px solid #e0e0e0; border-top-color: #03c75a;
+      border-radius: 50%; animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>아파트 매물 조회</h1>
+  <p>네이버 부동산 기준 · 평형별 실거래가 &amp; 매도호가</p>
+</header>
+
+<div class="container">
+
+  <div class="search-box">
+    <input
+      type="text"
+      id="searchInput"
+      placeholder="아파트 단지명 입력 (예: 헬리오시티, 래미안)"
+      autocomplete="off"
+    />
+    <button id="searchBtn" onclick="doSearch()">검색</button>
+  </div>
+
+  <!-- 단지 목록 -->
+  <div id="listCard" class="card hidden">
+    <div id="listLabel" class="section-label">검색 결과</div>
+    <ul id="complexList" class="complex-list"></ul>
+  </div>
+
+  <!-- 단지 상세 -->
+  <div id="detailSection" class="hidden">
+
+    <!-- 단지 정보 + 평형 탭 -->
+    <div class="card">
+      <div class="complex-header">
+        <span class="badge">선택된 단지</span>
+        <div class="info">
+          <div class="name" id="selName"></div>
+          <div class="addr" id="selAddr"></div>
+          <div class="stats" id="selStats"></div>
+        </div>
+      </div>
+      <div class="tab-label">평형 선택</div>
+      <div id="pyeongTabs" class="pyeong-tabs"></div>
+    </div>
+
+    <!-- 가격 영역 -->
+    <div id="priceArea"></div>
+
+  </div>
+
+</div>
+
+<script>
+  // ── 전역 상태 ──────────────────────────────────────────
+  let currentComplex = null;   // { complexNo, complexName, address, sizeList }
+  let pyeongs        = [];     // overview API의 pyeongs 배열
+  // pyeong: { pyeongNo, pyeongName, supplyArea, exclusiveArea }
+
+  document.getElementById('searchInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch();
+  });
+
+  // ── 검색 ───────────────────────────────────────────────
+  async function doSearch() {
+    const q = document.getElementById('searchInput').value.trim();
+    if (!q) return;
+    setSearchBtn(true);
+    hideDetail();
+    setListLoading('단지 검색 중…');
+    try {
+      const data = await apiFetch(`/api/search?query=${encodeURIComponent(q)}`);
+      renderComplexList(data.complexes || []);
+    } catch (e) {
+      setListError(e.message);
+    } finally {
+      setSearchBtn(false);
+    }
+  }
+
+  function renderComplexList(list) {
+    const card  = document.getElementById('listCard');
+    const label = document.getElementById('listLabel');
+    const ul    = document.getElementById('complexList');
+    card.classList.remove('hidden');
+
+    if (!list.length) {
+      label.textContent = '검색 결과 없음';
+      ul.innerHTML = '<li style="color:#aaa;padding:12px">검색 결과가 없습니다.</li>';
+      return;
+    }
+    if (list.length === 1) {
+      card.classList.add('hidden');
+      loadComplex(list[0]);
+      return;
+    }
+    label.textContent = `검색 결과 ${list.length}건 · 단지를 선택하세요`;
+    window._complexList = list;
+    ul.innerHTML = list.map((c, i) => `
+      <li onclick="pickComplex(${i})">
+        <div class="c-name">${esc(c.complexName)}</div>
+        <div class="c-addr">${esc(c.address)}</div>
+        <div class="c-meta">${c.totalHouseholdCount ? c.totalHouseholdCount + '세대' : ''}${
+          c.sizeList?.length ? ' · ' + c.sizeList.slice(0, 3).join(', ') + (c.sizeList.length > 3 ? '…' : '') : ''
+        }</div>
+      </li>`).join('');
+  }
+
+  function pickComplex(i) {
+    document.getElementById('listCard').classList.add('hidden');
+    loadComplex(window._complexList[i]);
+  }
+
+  // ── 단지 로드 ──────────────────────────────────────────
+  async function loadComplex(c) {
+    currentComplex = c;
+    document.getElementById('selName').textContent = c.complexName;
+    document.getElementById('selAddr').textContent = c.address;
+    document.getElementById('selStats').innerHTML = '';
+    document.getElementById('detailSection').classList.remove('hidden');
+    document.getElementById('pyeongTabs').innerHTML =
+      '<div class="state-box"><div class="spinner"></div><p>평형 로딩…</p></div>';
+    document.getElementById('priceArea').innerHTML = '';
+
+    try {
+      const overview = await apiFetch(`/api/complex/${c.complexNo}/overview`);
+      renderOverviewStats(overview);
+      pyeongs = (overview.pyeongs || []).sort((a, b) =>
+        parseFloat(a.exclusiveArea) - parseFloat(b.exclusiveArea)
+      );
+      renderPyeongTabs();
+    } catch (e) {
+      document.getElementById('pyeongTabs').innerHTML =
+        `<div class="state-box error"><p>평형 로딩 실패: ${esc(e.message)}</p></div>`;
+    }
+  }
+
+  function renderOverviewStats(ov) {
+    const stats = document.getElementById('selStats');
+    const items = [
+      ov.totalHouseHoldCount && `세대수 <span>${ov.totalHouseHoldCount.toLocaleString()}세대</span>`,
+      ov.useApproveYmd && `준공 <span>${formatYmd(ov.useApproveYmd)}</span>`,
+      ov.minPriceByLetter && ov.maxPriceByLetter &&
+        `매매 <span>${ov.minPriceByLetter} ~ ${ov.maxPriceByLetter}</span>`,
+    ].filter(Boolean);
+    stats.innerHTML = items.map(t => `<span class="stat-item">${t}</span>`).join('');
+  }
+
+  // ── 평형 탭 ────────────────────────────────────────────
+  function renderPyeongTabs() {
+    const tabsEl = document.getElementById('pyeongTabs');
+    if (!pyeongs.length) {
+      tabsEl.innerHTML = '<span style="color:#aaa;font-size:.85rem">평형 정보 없음</span>';
+      loadPrices(null);
+      return;
+    }
+    tabsEl.innerHTML = pyeongs.map((p, i) => {
+      const excl = p.exclusiveArea ? parseFloat(p.exclusiveArea).toFixed(1) : '?';
+      const suppl = p.supplyArea ? parseFloat(p.supplyArea).toFixed(1) : '?';
+      const label = `${suppl}㎡<br><small style="font-weight:400;font-size:.75em">전용 ${excl}㎡</small>`;
+      return `<button class="pyeong-tab ${i === 0 ? 'active' : ''}"
+        onclick="selectPyeong(${i})">${label}</button>`;
+    }).join('');
+    selectPyeong(0);
+  }
+
+  function selectPyeong(idx) {
+    document.querySelectorAll('.pyeong-tab').forEach((el, i) =>
+      el.classList.toggle('active', i === idx)
+    );
+    loadPrices(pyeongs[idx]);
+  }
+
+  // ── 가격 정보 로드 ─────────────────────────────────────
+  async function loadPrices(pyeong) {
+    const priceArea = document.getElementById('priceArea');
+    priceArea.innerHTML = `<div class="card"><div class="state-box">
+      <div class="spinner"></div><p>가격 정보 로딩 중…</p></div></div>`;
+
+    const no = currentComplex.complexNo;
+    const areaNo = pyeong ? pyeong.pyeongNo : 0;
+    const pyeongName = pyeong ? pyeong.pyeongName : '';
+
+    const [askRes, realRes] = await Promise.allSettled([
+      apiFetch(`/api/articles/${no}?tradeType=A1&areaNos=${areaNo}`),
+      apiFetch(`/api/real-prices/${no}?tradeType=A1&areaNo=${areaNo}`),
+    ]);
+
+    priceArea.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'price-grid';
+
+    const realCard = document.createElement('div');
+    realCard.className = 'card';
+    realCard.innerHTML = realRes.status === 'fulfilled'
+      ? renderRealPrices(realRes.value, pyeongName)
+      : errSection('최근 실거래가', realRes.reason?.message);
+
+    const askCard = document.createElement('div');
+    askCard.className = 'card';
+    askCard.innerHTML = askRes.status === 'fulfilled'
+      ? renderAskPrices(askRes.value, pyeongName, currentComplex.complexNo)
+      : errSection('매도 호가', askRes.reason?.message);
+
+    grid.appendChild(realCard);
+    grid.appendChild(askCard);
+    priceArea.appendChild(grid);
+  }
+
+  // ── 실거래가 렌더링 ────────────────────────────────────
+  function renderRealPrices(data, pyeongName) {
+    // 월별 그룹 → 개별 거래 목록으로 flatten
+    const monthGroups = data?.realPriceOnMonthList || [];
+    const allPrices = monthGroups.flatMap(m => m.realPriceList || []);
+
+    if (!allPrices.length) {
+      return `<div class="section-title">최근 실거래가</div>
+        <div class="state-box"><p>최근 거래 내역이 없습니다.</p></div>`;
+    }
+
+    const rows = allPrices.slice(0, 20).map(p => {
+      const dateStr = p.formattedTradeYearMonth ||
+        (p.tradeYear && p.tradeMonth ? `${p.tradeYear}.${String(p.tradeMonth).padStart(2,'0')}.${p.tradeDate||''}` : '-');
+      const priceStr = p.formattedPrice || (p.dealPrice ? fmtWon(p.dealPrice) : '-');
+      return `<tr>
+        <td>${esc(dateStr)}</td>
+        <td class="price-blue">${esc(priceStr)}</td>
+        <td>${p.floor || '-'}층</td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <div class="section-title">최근 실거래가${pyeongName ? ' (' + esc(pyeongName) + ')' : ''} (${allPrices.length}건)</div>
+      <div class="tbl-wrap">
+        <table class="price-table">
+          <thead><tr><th>거래일</th><th>거래가</th><th>층</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // ── 매도호가 렌더링 ────────────────────────────────────
+  function renderAskPrices(data, pyeongName, complexNo) {
+    let list = data?.articleList || [];
+
+    if (!list.length) {
+      return `<div class="section-title">매도 호가</div>
+        <div class="state-box"><p>현재 매물이 없습니다.</p></div>`;
+    }
+
+    const rows = list.slice(0, 20).map(a => {
+      const url = a.articleNo && complexNo
+        ? `https://new.land.naver.com/complexes/${complexNo}?articleNo=${a.articleNo}`
+        : '';
+      const floorDong = [a.buildingName, a.floorInfo].filter(Boolean).join(' ');
+      return `
+      <tr ${url ? `class="clickable-row" onclick="window.open('${url}','_blank')"` : ''}>
+        <td>${tradeTag(a.tradeTypeName || a.tradeTypeCode)}</td>
+        <td class="price-red">${esc(a.dealOrWarrantPrc || '-')}</td>
+        <td>${esc(a.areaName ? a.areaName + '㎡' : '-')}</td>
+        <td>${esc(floorDong || '-')}</td>
+        <td>${esc(a.direction || '-')}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <div class="section-title">매도 호가${pyeongName ? ' (' + esc(pyeongName) + ')' : ''} (${list.length}건)</div>
+      <div class="tbl-wrap">
+        <table class="price-table">
+          <thead><tr><th>유형</th><th>가격</th><th>면적</th><th>층</th><th>방향</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // ── 유틸 ───────────────────────────────────────────────
+  async function apiFetch(url) {
+    const res = await fetch(url);
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); }
+    catch { throw new Error('파싱 오류: ' + text.slice(0, 80)); }
+    if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+    return json;
+  }
+
+  function esc(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function fmtWon(n) {
+    // n은 만원 단위
+    if (!n) return '-';
+    const eok = Math.floor(n / 10000);
+    const man = n % 10000;
+    if (eok > 0 && man > 0) return `${eok}억 ${man.toLocaleString()}`;
+    if (eok > 0) return `${eok}억`;
+    return `${man.toLocaleString()}만`;
+  }
+
+  function formatYmd(ymd) {
+    if (!ymd || ymd.length < 4) return ymd;
+    return ymd.slice(0, 4) + '년';
+  }
+
+  function tradeTag(t) {
+    if (!t) return '';
+    if (t === 'A1' || t.includes('매매')) return `<span class="tag tag-sell">매매</span>`;
+    if (t === 'B1' || t.includes('전세')) return `<span class="tag tag-charter">전세</span>`;
+    if (t === 'B2' || t.includes('월세')) return `<span class="tag tag-rent">월세</span>`;
+    return `<span class="tag tag-sell">${esc(t)}</span>`;
+  }
+
+  function errSection(title, msg) {
+    return `<div class="section-title">${title}</div>
+      <div class="state-box error"><p>${esc(msg || '불러오기 실패')}</p></div>`;
+  }
+
+  function setListLoading(msg) {
+    document.getElementById('listCard').classList.remove('hidden');
+    document.getElementById('listLabel').textContent = '';
+    document.getElementById('complexList').innerHTML =
+      `<li><div class="state-box"><div class="spinner"></div><p>${msg}</p></div></li>`;
+  }
+
+  function setListError(msg) {
+    document.getElementById('listCard').classList.remove('hidden');
+    document.getElementById('listLabel').textContent = '오류';
+    document.getElementById('complexList').innerHTML =
+      `<li><div class="state-box error"><p>${esc(msg)}</p></div></li>`;
+  }
+
+  function hideDetail() {
+    document.getElementById('detailSection').classList.add('hidden');
+    document.getElementById('priceArea').innerHTML = '';
+  }
+
+  function setSearchBtn(loading) {
+    const btn = document.getElementById('searchBtn');
+    btn.disabled = loading;
+    btn.textContent = loading ? '검색 중…' : '검색';
+  }
+</script>
+
+</body>
+</html>
