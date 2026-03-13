@@ -71,9 +71,10 @@ class NaverBrowser:
         print('[browser] 초기화 중 (단지 페이지 방문)…')
         await self._page.goto(
             f'https://new.land.naver.com/complexes/{self.WARMUP_COMPLEX}',
-            wait_until='networkidle',
+            wait_until='domcontentloaded',
+            timeout=60000,
         )
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
         self._ready.set()
 
     async def _ensure_jwt(self):
@@ -82,9 +83,10 @@ class NaverBrowser:
         print('[browser] JWT 재발급 중…')
         await self._page.goto(
             f'https://new.land.naver.com/complexes/{self.WARMUP_COMPLEX}',
-            wait_until='networkidle',
+            wait_until='domcontentloaded',
+            timeout=60000,
         )
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
 
     async def _eval_fetch(self, url: str, with_auth: bool = True) -> dict:
         await self._ensure_jwt()
@@ -246,8 +248,8 @@ def real_prices(complex_no):
 
 # ══════════════════════════════════════════════════════════
 if __name__ == '__main__':
-    print('[startup] 브라우저 초기화 중…')
-    get_browser()
+    # 브라우저를 백그라운드에서 초기화 (서버 포트 바인딩 먼저)
+    threading.Thread(target=get_browser, daemon=True).start()
     port = int(os.environ.get('PORT', 3333))
     print(f'[startup] 서버: http://localhost:{port}')
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
