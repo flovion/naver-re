@@ -1,14 +1,13 @@
 """
 네이버 부동산 아파트 조회 서버
-- 검색/매물/실거래가: Playwright 브라우저 내 fetch() 사용
-  - 검색: new.land.naver.com/api/search (쿠키 인증, JWT 불필요)
-  - 매물/실거래가: JWT Bearer 사용
+- 이미지/CSS/폰트 차단으로 메모리 최소화
+- API 호출: page.evaluate(fetch) 사용 (requests는 429 차단됨)
 """
 import asyncio
-import json
 import threading
 import time
 import os
+import json
 import urllib.parse
 
 from flask import Flask, request, jsonify, send_from_directory
@@ -17,7 +16,7 @@ app = Flask(__name__, static_folder='public')
 
 
 # ══════════════════════════════════════════════════════════
-# Playwright 브라우저 매니저
+# JWT + 쿠키 매니저 (브라우저는 갱신 시에만 잠깐 실행)
 # ══════════════════════════════════════════════════════════
 class NaverBrowser:
     WARMUP_COMPLEX = '111515'
@@ -29,7 +28,7 @@ class NaverBrowser:
         self._jwt    = None
         self._jwt_ts = 0
         self._page   = None
-        self._lock   = None  # asyncio.Lock 은 이벤트루프 안에서 생성
+        self._lock   = None
 
         t = threading.Thread(target=self._run, daemon=True)
         t.start()
@@ -46,7 +45,10 @@ class NaverBrowser:
         self._lock = asyncio.Lock()
         from playwright.async_api import async_playwright
         self._pw = await async_playwright().__aenter__()
-        self._browser = await self._pw.chromium.launch(headless=True)
+        self._browser = await self._pw.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+        )
         self._ctx = await self._browser.new_context(
             user_agent=(
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -56,6 +58,14 @@ class NaverBrowser:
             locale='ko-KR',
         )
         self._page = await self._ctx.new_page()
+
+        # 이미지/폰트/미디어 차단 (메모리 절약)
+        await self._page.route(
+            '**/*',
+            lambda route: route.abort()
+            if route.request.resource_type in ('image', 'font', 'media', 'stylesheet')
+            else route.continue_()
+        )
 
         async def on_request(req):
             if 'new.land.naver.com/api' in req.url:
@@ -68,7 +78,7 @@ class NaverBrowser:
                         print(f'[browser] JWT 갱신: {tok[:30]}…')
         self._page.on('request', on_request)
 
-        print('[browser] 초기화 중 (단지 페이지 방문)…')
+        print('[browser] 초기화 중…')
         await self._page.goto(
             f'https://new.land.naver.com/complexes/{self.WARMUP_COMPLEX}',
             wait_until='domcontentloaded',
@@ -104,17 +114,13 @@ class NaverBrowser:
             }});
             const text = await resp.text();
             let data;
-            try {{
-                data = JSON.parse(text);
-            }} catch(e) {{
+            try {{ data = JSON.parse(text); }} catch(e) {{
                 return {{ status: resp.status, parseError: e.message, preview: text.substring(0, 120) }};
             }}
             return {{ status: resp.status, data }};
         }}''')
         if 'parseError' in result:
-            raise Exception(
-                f"JSON 파싱 실패 (HTTP {result['status']}): {result.get('preview','')[:100]}"
-            )
+            raise Exception(f"JSON 파싱 실패 (HTTP {result['status']}): {result.get('preview','')[:100]}")
         if result['status'] not in (200, 201):
             raise Exception(f"Naver API 오류 {result['status']}: {json.dumps(result.get('data',{}), ensure_ascii=False)[:120]}")
         return result['data']
@@ -137,7 +143,6 @@ class NaverBrowser:
         return future.result(timeout=25)
 
 
-
 _browser: NaverBrowser | None = None
 
 
@@ -157,7 +162,6 @@ def index():
     return send_from_directory('public', 'index.html')
 
 
-# ── 단지 검색 ────────────────────────────────────────────
 @app.route('/api/search')
 def search():
     query = request.args.get('query', '').strip()
@@ -185,7 +189,6 @@ def search():
         return jsonify({'error': str(e)}), 500
 
 
-# ── 단지 개요 + 평형 목록 ────────────────────────────────
 @app.route('/api/complex/<complex_no>/overview')
 def complex_overview(complex_no):
     url = f'https://new.land.naver.com/api/complexes/overview/{complex_no}'
@@ -196,7 +199,6 @@ def complex_overview(complex_no):
         return jsonify({'error': str(e)}), 500
 
 
-# ── 현재 매물 목록 (호가) ────────────────────────────────
 @app.route('/api/articles/<complex_no>')
 def articles(complex_no):
     trade_type = request.args.get('tradeType', 'A1')
@@ -226,7 +228,6 @@ def articles(complex_no):
         return jsonify({'error': str(e)}), 500
 
 
-# ── 실거래가 ─────────────────────────────────────────────
 @app.route('/api/real-prices/<complex_no>')
 def real_prices(complex_no):
     trade_type = request.args.get('tradeType', 'A1')
@@ -248,7 +249,6 @@ def real_prices(complex_no):
 
 # ══════════════════════════════════════════════════════════
 if __name__ == '__main__':
-    # 브라우저를 백그라운드에서 초기화 (서버 포트 바인딩 먼저)
     threading.Thread(target=get_browser, daemon=True).start()
     port = int(os.environ.get('PORT', 3333))
     print(f'[startup] 서버: http://localhost:{port}')
