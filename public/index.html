@@ -144,7 +144,26 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .hidden { display: none !important; }
+
+    /* ── 정렬 컨트롤 ── */
+    .sort-bar {
+      display: flex; gap: 8px; align-items: center;
+      margin-bottom: 10px; flex-wrap: wrap;
+    }
+    .sort-label { font-size: .8rem; color: #888; }
+    .sort-btn {
+      padding: 4px 12px; border: 1.5px solid #dde1e7;
+      border-radius: 14px; font-size: .8rem; font-weight: 600;
+      color: #555; background: #fff; cursor: pointer; transition: all .15s;
+    }
+    .sort-btn:hover  { border-color: #03c75a; color: #03c75a; }
+    .sort-btn.active { background: #03c75a; border-color: #03c75a; color: #fff; }
+
+    /* ── 차트 ── */
+    .chart-wrap { width: 100%; height: 220px; margin-bottom: 16px; position: relative; }
+    canvas.price-chart { width: 100% !important; height: 100% !important; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -197,9 +216,12 @@
 
 <script>
   // ── 전역 상태 ──────────────────────────────────────────
-  let currentComplex = null;   // { complexNo, complexName, address, sizeList }
-  let pyeongs        = [];     // overview API의 pyeongs 배열
-  // pyeong: { pyeongNo, pyeongName, supplyArea, exclusiveArea }
+  let currentComplex  = null;   // { complexNo, complexName, address, sizeList }
+  let pyeongs         = [];     // overview API의 pyeongs 배열
+  let selectedPyeongs = new Set(); // 선택된 평형 인덱스 집합
+  let askSortKey      = 'rank';  // 매물 정렬 기준
+  let askGroupDup     = true;    // 동일매물 묶기 여부
+  let chartInstances  = {};      // 평형별 Chart.js 인스턴스
 
   document.getElementById('searchInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') doSearch();
@@ -295,65 +317,102 @@
     const tabsEl = document.getElementById('pyeongTabs');
     if (!pyeongs.length) {
       tabsEl.innerHTML = '<span style="color:#aaa;font-size:.85rem">평형 정보 없음</span>';
-      loadPrices(null);
+      loadPricesMulti([]);
       return;
     }
+    selectedPyeongs = new Set([0]);
     tabsEl.innerHTML = pyeongs.map((p, i) => {
       const excl = p.exclusiveArea ? parseFloat(p.exclusiveArea).toFixed(1) : '?';
       const suppl = p.supplyArea ? parseFloat(p.supplyArea).toFixed(1) : '?';
       const label = `${suppl}㎡<br><small style="font-weight:400;font-size:.75em">전용 ${excl}㎡</small>`;
       return `<button class="pyeong-tab ${i === 0 ? 'active' : ''}"
-        onclick="selectPyeong(${i})">${label}</button>`;
+        onclick="togglePyeong(${i})">${label}</button>`;
     }).join('');
-    selectPyeong(0);
+    loadPricesMulti([0]);
   }
 
-  function selectPyeong(idx) {
+  function togglePyeong(idx) {
+    if (selectedPyeongs.has(idx)) {
+      if (selectedPyeongs.size === 1) return; // 최소 1개 유지
+      selectedPyeongs.delete(idx);
+    } else {
+      selectedPyeongs.add(idx);
+    }
     document.querySelectorAll('.pyeong-tab').forEach((el, i) =>
-      el.classList.toggle('active', i === idx)
+      el.classList.toggle('active', selectedPyeongs.has(i))
     );
-    loadPrices(pyeongs[idx]);
+    loadPricesMulti([...selectedPyeongs].sort((a,b) => a-b));
   }
 
-  // ── 가격 정보 로드 ─────────────────────────────────────
-  async function loadPrices(pyeong) {
+  // ── 가격 정보 로드 (다중 평형) ────────────────────────
+  async function loadPricesMulti(idxList) {
+    // 이전 차트 인스턴스 정리
+    Object.values(chartInstances).forEach(c => c.destroy());
+    chartInstances = {};
+
     const priceArea = document.getElementById('priceArea');
     priceArea.innerHTML = `<div class="card"><div class="state-box">
       <div class="spinner"></div><p>가격 정보 로딩 중…</p></div></div>`;
 
     const no = currentComplex.complexNo;
-    const areaNo = pyeong ? pyeong.pyeongNo : 0;
-    const pyeongName = pyeong ? pyeong.pyeongName : '';
+    const selectedList = idxList.map(i => pyeongs[i]).filter(Boolean);
 
-    const [askRes, realRes] = await Promise.allSettled([
-      apiFetch(`/api/articles/${no}?tradeType=A1&areaNos=${areaNo}`),
-      apiFetch(`/api/real-prices/${no}?tradeType=A1&areaNo=${areaNo}`),
-    ]);
+    // 평형별로 API 호출
+    const results = await Promise.all(selectedList.map(p => {
+      const areaNo = p ? p.pyeongNo : 0;
+      return Promise.allSettled([
+        apiFetch(`/api/articles/${no}?tradeType=A1&areaNos=${areaNo}`),
+        apiFetch(`/api/real-prices/${no}?tradeType=A1&areaNo=${areaNo}`),
+      ]);
+    }));
 
     priceArea.innerHTML = '';
-    const grid = document.createElement('div');
-    grid.className = 'price-grid';
 
-    const realCard = document.createElement('div');
-    realCard.className = 'card';
-    realCard.innerHTML = realRes.status === 'fulfilled'
-      ? renderRealPrices(realRes.value, pyeongName)
-      : errSection('최근 실거래가', realRes.reason?.message);
+    // 평형이 2개 이상이면 평형별로 섹션 구분
+    selectedList.forEach((p, si) => {
+      const [askRes, realRes] = results[si];
+      const pyeongName = p ? p.pyeongName : '';
 
+      if (selectedList.length > 1) {
+        const header = document.createElement('div');
+        header.style.cssText = 'font-size:.95rem;font-weight:700;color:#03c75a;margin:16px 0 8px;padding-left:4px';
+        header.textContent = `▪ ${pyeongName} 평형`;
+        priceArea.appendChild(header);
+      }
+
+      const grid = document.createElement('div');
+      grid.className = 'price-grid';
+
+      const realCard = document.createElement('div');
+      realCard.className = 'card';
+      const chartId = `chart-${p ? p.pyeongNo : 'all'}-${si}`;
+      if (realRes.status === 'fulfilled') {
+        realCard.innerHTML = renderRealPrices(realRes.value, pyeongName, chartId);
+        grid.appendChild(realCard);
+        grid.appendChild(createAskCard(askRes, pyeongName));
+        priceArea.appendChild(grid);
+        // 차트 렌더링 (DOM에 추가된 후)
+        requestAnimationFrame(() => drawRealPriceChart(realRes.value, chartId));
+      } else {
+        realCard.innerHTML = errSection('최근 실거래가', realRes.reason?.message);
+        grid.appendChild(realCard);
+        grid.appendChild(createAskCard(askRes, pyeongName));
+        priceArea.appendChild(grid);
+      }
+    });
+  }
+
+  function createAskCard(askRes, pyeongName) {
     const askCard = document.createElement('div');
     askCard.className = 'card';
     askCard.innerHTML = askRes.status === 'fulfilled'
       ? renderAskPrices(askRes.value, pyeongName, currentComplex.complexNo)
       : errSection('매도 호가', askRes.reason?.message);
-
-    grid.appendChild(realCard);
-    grid.appendChild(askCard);
-    priceArea.appendChild(grid);
+    return askCard;
   }
 
   // ── 실거래가 렌더링 ────────────────────────────────────
-  function renderRealPrices(data, pyeongName) {
-    // 월별 그룹 → 개별 거래 목록으로 flatten
+  function renderRealPrices(data, pyeongName, chartId) {
     const monthGroups = data?.realPriceOnMonthList || [];
     const allPrices = monthGroups.flatMap(m => m.realPriceList || []);
 
@@ -375,12 +434,58 @@
 
     return `
       <div class="section-title">최근 실거래가${pyeongName ? ' (' + esc(pyeongName) + ')' : ''} (${allPrices.length}건)</div>
+      <div class="chart-wrap"><canvas id="${chartId}" class="price-chart"></canvas></div>
       <div class="tbl-wrap">
         <table class="price-table">
           <thead><tr><th>거래일</th><th>거래가</th><th>층</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
+  }
+
+  // ── 실거래가 차트 ──────────────────────────────────────
+  function drawRealPriceChart(data, chartId) {
+    const canvas = document.getElementById(chartId);
+    if (!canvas) return;
+    const monthGroups = data?.realPriceOnMonthList || [];
+    const allPrices = monthGroups.flatMap(m => m.realPriceList || []).slice(0, 20).reverse();
+
+    const labels = allPrices.map(p =>
+      p.formattedTradeYearMonth ||
+      (p.tradeYear && p.tradeMonth ? `${p.tradeYear}.${String(p.tradeMonth).padStart(2,'0')}` : '')
+    );
+    const values = allPrices.map(p => p.dealPrice ? p.dealPrice / 10000 : null);
+
+    chartInstances[chartId] = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: '실거래가 (억)',
+          data: values,
+          borderColor: '#03c75a',
+          backgroundColor: 'rgba(3,199,90,0.08)',
+          pointBackgroundColor: '#03c75a',
+          pointRadius: 4,
+          tension: 0.3,
+          fill: true,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
+          y: {
+            ticks: {
+              font: { size: 10 },
+              callback: v => v + '억'
+            }
+          }
+        }
+      }
+    });
   }
 
   // ── 매도호가 렌더링 ────────────────────────────────────
@@ -392,29 +497,93 @@
         <div class="state-box"><p>현재 매물이 없습니다.</p></div>`;
     }
 
-    const rows = list.slice(0, 20).map(a => {
+    const grouped = askGroupDup ? groupDuplicates(list) : list.map(a => ({...a, _dupCount: 1}));
+    const sortedList = sortArticles(grouped, askSortKey);
+
+    const rows = sortedList.slice(0, 20).map(a => {
       const url = a.articleNo && complexNo
         ? `https://new.land.naver.com/complexes/${complexNo}?articleNo=${a.articleNo}`
         : '';
       const floorDong = [a.buildingName, a.floorInfo].filter(Boolean).join(' ');
+      const dupCnt = a.sameAddrCnt || a._dupCount || 1;
+      const dupBadge = dupCnt > 1
+        ? `<span style="font-size:.72rem;color:#888;margin-left:4px">중개사 ${dupCnt}곳</span>` : '';
       return `
       <tr ${url ? `class="clickable-row" onclick="window.open('${url}','_blank')"` : ''}>
         <td>${tradeTag(a.tradeTypeName || a.tradeTypeCode)}</td>
-        <td class="price-red">${esc(a.dealOrWarrantPrc || '-')}</td>
+        <td class="price-red">${esc(a.dealOrWarrantPrc || '-')}${dupBadge}</td>
         <td>${esc(a.areaName ? a.areaName + '㎡' : '-')}</td>
         <td>${esc(floorDong || '-')}</td>
         <td>${esc(a.direction || '-')}</td>
       </tr>`;
     }).join('');
 
+    const totalCount = askGroupDup ? sortedList.length : list.length;
+    const origCount = list.length;
+    const countLabel = askGroupDup && origCount !== totalCount
+      ? `${totalCount}건 <span style="font-size:.78rem;color:#aaa">(중복 제외 전 ${origCount}건)</span>`
+      : `${origCount}건`;
+
     return `
-      <div class="section-title">매도 호가${pyeongName ? ' (' + esc(pyeongName) + ')' : ''} (${list.length}건)</div>
+      <div class="section-title">매도 호가${pyeongName ? ' (' + esc(pyeongName) + ')' : ''} (${countLabel})</div>
+      <div style="font-size:.75rem;color:#aaa;margin-bottom:6px">※ 최대 100건까지 조회됩니다.</div>
+      <div class="sort-bar">
+        <span class="sort-label">정렬:</span>
+        <button class="sort-btn ${askSortKey==='rank'?'active':''}" onclick="changeAskSort('rank')">기본순</button>
+        <button class="sort-btn ${askSortKey==='price_asc'?'active':''}" onclick="changeAskSort('price_asc')">가격 낮은순</button>
+        <button class="sort-btn ${askSortKey==='price_desc'?'active':''}" onclick="changeAskSort('price_desc')">가격 높은순</button>
+        <button class="sort-btn ${askSortKey==='date_desc'?'active':''}" onclick="changeAskSort('date_desc')">최신등록순</button>
+        <button class="sort-btn ${askGroupDup?'active':''}" onclick="toggleDupGroup()" style="margin-left:8px">✓ 동일매물 묶기</button>
+      </div>
       <div class="tbl-wrap">
         <table class="price-table">
           <thead><tr><th>유형</th><th>가격</th><th>면적</th><th>층</th><th>방향</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
+  }
+
+  function sortArticles(list, key) {
+    const arr = [...list];
+    if (key === 'price_asc') {
+      return arr.sort((a, b) => parsePrice(a.dealOrWarrantPrc) - parsePrice(b.dealOrWarrantPrc));
+    } else if (key === 'price_desc') {
+      return arr.sort((a, b) => parsePrice(b.dealOrWarrantPrc) - parsePrice(a.dealOrWarrantPrc));
+    } else if (key === 'date_desc') {
+      return arr.sort((a, b) => (b.articleConfirmYmd||'').localeCompare(a.articleConfirmYmd||''));
+    }
+    return arr; // rank (기본)
+  }
+
+  function parsePrice(str) {
+    if (!str) return 0;
+    // "10억 5,000" → 숫자 변환
+    const eok = str.match(/(\d+)억/);
+    const man = str.match(/억\s*([\d,]+)/);
+    return (eok ? parseInt(eok[1]) * 10000 : 0) + (man ? parseInt(man[1].replace(/,/g,'')) : 0);
+  }
+
+  function changeAskSort(key) {
+    askSortKey = key;
+    loadPricesMulti([...selectedPyeongs].sort((a,b) => a-b));
+  }
+
+  function toggleDupGroup() {
+    askGroupDup = !askGroupDup;
+    loadPricesMulti([...selectedPyeongs].sort((a,b) => a-b));
+  }
+
+  function groupDuplicates(list) {
+    const map = new Map();
+    for (const a of list) {
+      const key = [a.buildingName||'', a.floorInfo||'', a.dealOrWarrantPrc||'', a.areaName||''].join('|');
+      if (!map.has(key)) {
+        map.set(key, {...a, _dupCount: 1});
+      } else {
+        map.get(key)._dupCount++;
+      }
+    }
+    return [...map.values()];
   }
 
   // ── 유틸 ───────────────────────────────────────────────

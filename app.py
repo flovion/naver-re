@@ -203,9 +203,8 @@ def complex_overview(complex_no):
 def articles(complex_no):
     trade_type = request.args.get('tradeType', 'A1')
     area_nos   = request.args.get('areaNos', '')
-    page_no    = request.args.get('page', '1')
     url = f'https://new.land.naver.com/api/articles/complex/{complex_no}'
-    params = {
+    base_params = {
         'realEstateType': 'APT:ABYG:JGC:PRE',
         'tradeType': trade_type,
         'tag': '::::::::',
@@ -215,7 +214,6 @@ def articles(complex_no):
         'showArticle': 'false',
         'sameAddressGroup': 'false',
         'priceType': 'RETAIL',
-        'page': page_no,
         'complexNo': complex_no,
         'buildingNos': '',
         'areaNos': area_nos,
@@ -223,7 +221,17 @@ def articles(complex_no):
         'order': 'rank',
     }
     try:
-        return jsonify(get_browser().fetch(url, params))
+        all_articles = []
+        page = 1
+        while len(all_articles) < 100:
+            params = {**base_params, 'page': str(page)}
+            data = get_browser().fetch(url, params)
+            all_articles.extend(data.get('articleList') or [])
+            if not data.get('isMoreData', False) or len(all_articles) >= 100:
+                break
+            page += 1
+        all_articles = all_articles[:100]
+        return jsonify({'articleList': all_articles, 'isMoreData': False, 'totalCount': len(all_articles)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
